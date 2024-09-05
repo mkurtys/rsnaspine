@@ -8,6 +8,13 @@ def normalise_to_8bit(x, lower=0.1, upper=99.9): # 1, 99 #0.05, 99.5 #0, 100
     x = x / np.max(x)
     return (x * 255).astype(np.uint8)
 
+def normalise_to_01(x, lower=0.1, upper=99.9): # 1, 99 #0.05, 99.5 #0, 100
+    lower, upper = np.percentile(x, (lower, upper))
+    x = np.clip(x, lower, upper)
+    x -= np.min(x)
+    x /= np.max(x)
+    return x
+
 
 def image_to_patient_coords_3d(x, y, 
                image_position_patient: np.ndarray,

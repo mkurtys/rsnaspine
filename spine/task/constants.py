@@ -16,3 +16,10 @@ LEVELS = [
     'L4/L5',
     'L5/S1',
 ]
+
+SERIES = [
+    "Axial T2",
+    "Sagittal T1",
+    "Sagittal T2/STIR"
+]
+

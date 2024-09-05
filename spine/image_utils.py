@@ -1,12 +1,38 @@
-p = data_shape[i].reshape(-1)
-m = data_image[i]
+import numpy as np
+import cv2
+from typing import Tuple
 
-H,W = m.shape[:2]
-s = 512/max(H,W)
-    
-p_512 = p*s 
-m_512 = cv2.resize(m, dsize=None,fx=s,fy=s)
-h,w = m_512.shape[:2]
-m_512 = np.pad(m_512,[[0,512-h],[0,512-w], [0,0]],mode='constant',constant_values=0)
+def resize_image_with_pad(image, target_size) -> Tuple[np.ndarray, float]:
+    h, w = target_size
+    h_1, w_1 = image.shape[:2]
+    ratio_f = w / h
+    ratio_1 = w_1 / h_1
 
+    # check if the original and final aspect ratios are the same within a margin
+    if round(ratio_1, 2) != round(ratio_f, 2):
+        # padding to preserve aspect ratio
+        hp = int(w_1/ratio_f - h_1)
+        wp = int(ratio_f * h_1 - w_1)
+        if hp > 0 and wp < 0:
+            scale = w/w_1
+            image = cv2.copyMakeBorder(image, 0, hp, 0, 0, cv2.BORDER_CONSTANT, value=0)
+        elif hp < 0 and wp > 0:
+            scale = h/h_1
+            image = cv2.copyMakeBorder(image, 0, 0, 0, wp, cv2.BORDER_CONSTANT, value=0)
+    else:
+        scale = h/h_1
+
+    return cv2.resize(image, (w,h), interpolation = cv2.INTER_LINEAR), scale
+
+def crop_or_pad(image: np.ndarray, target_size):
+    h, w = target_size
+    h_1, w_1 = image.shape
+    if w_1 > w and h_1 > h:
+        return image[:h, :w]
+    else:
+        new_image = np.zeros((h, w), dtype=image.dtype)
+        wm = min(w, w_1)
+        hm = min(h, h_1)
+        new_image[:hm, :wm] = image[:hm, :wm]
+        return new_image
 
