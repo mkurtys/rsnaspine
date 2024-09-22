@@ -53,9 +53,14 @@ class SpineSeries:
         self.volume = volume
         self.meta = meta
         self.scale = scale
+        self.instance_id_map = {inst.instance_number : inst for inst in self.meta}
+
 
     def get_instance(self, instance_number: int) -> InstanceMeta:
-        return self.meta[instance_number]
+        return self.instance_id_map[instance_number]
+    
+    def get_instances(self):
+        return self.meta
 
 
 class SpineStudy:
@@ -88,7 +93,7 @@ class SpineStudy:
     def get_instances_scales(self):
         return pd.DataFrame([[self.study_id,
                               s.series_id, instance.instance_number, instance.scale] 
-                              for s in self.series for instance in s.meta], columns=["study_id", "series_id",  "instance_number", "scale"])
+                              for s in self.series for instance in s.meta.values()], columns=["study_id", "series_id",  "instance_number", "scale"])
     
     def get_series_scales(self):
         return pd.DataFrame([[self.study_id,

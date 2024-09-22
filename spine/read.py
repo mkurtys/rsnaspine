@@ -41,12 +41,14 @@ def read_series(
     else:
         pixel_arrays = [d.pixel_array for _,d in dicom_instances]
 
+
     instance_meta = []
+    # instance_id_map = {}
     resized_pixel_arrays = []
     series_scale = 1.0
     for j,(i,d) in enumerate(dicom_instances):
+        # instance_id_map[i] = j
         pa = pixel_arrays[j]
-
         position = np.array([float(v) for v in d.ImagePositionPatient])
         orientation = np.array([float(v) for v in d.ImageOrientationPatient])
         normal = np.cross(orientation[:3], orientation[3:])
@@ -90,7 +92,7 @@ def read_series(
                     orientation=orientation,
                     normal=normal,
                     projection=projection,
-                    pixel_spacing=pixel_spacing,
+                    pixel_spacing=resized_spacing,
                     spacing_between_slices=float(d.SpacingBetweenSlices),
                     slice_thickness=float(d.SliceThickness),
                     # original_pixel_spacing=pixel_spacing,

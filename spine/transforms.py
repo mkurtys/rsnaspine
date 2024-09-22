@@ -34,7 +34,7 @@ def patient_coords_to_image_2d(coords:np.ndarray, instance_meta:InstanceMeta,
     sx, sy, sz = instance_meta.position
     o0, o1, o2, o3, o4, o5, = instance_meta.orientation
     delx, dely = instance_meta.pixel_spacing
-    delz = instance_meta.slice_thickness/2
+    delz = instance_meta.slice_thickness
 
     ax = np.array([o0,o1,o2])
     ay = np.array([o3,o4,o5])
