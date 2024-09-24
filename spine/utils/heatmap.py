@@ -64,8 +64,8 @@ def heatmap_3d_encoder(series: SpineSeries, stride, gt_coords, gt_classes, sigma
     for i, (gt_coord, gt_class) in enumerate(zip(gt_coords, gt_classes)):
         distance = np.square((gt_coord - mesh)).sum(axis=-1)
         heatmap[i] = _gaussian(distance, sigma).reshape(mesh.shape[:-1])
-        heatmap_sum = heatmap[i].sum()
-        heatmap[i] = heatmap[i] / heatmap_sum if heatmap_sum > 0 else heatmap[i]
+        heatmap_max = heatmap[i].max()
+        heatmap[i] = heatmap[i] / heatmap_max if heatmap_max > 0 else heatmap[i]
     return heatmap
 
 

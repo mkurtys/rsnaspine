@@ -91,9 +91,9 @@ class Enc2d3d(nn.Module):
         output = {}
         if 'loss' in output_types:
             output['heatmap_loss'] = F_focal_heatmap_loss(heatmap, batch['heatmap'].to(device), D)
-            output['zxy_loss'] = F_zxy_loss(z, xy, batch['z'].to(device), batch['xy'].to(device))
-
-            # output['grade_loss'] = F_grade_loss(grade,  batch['grade'].to(device))
+            output['zxy_loss'] = 0
+            #output['zxy_loss'] = F_zxy_loss(z, xy, batch['z'].to(device), batch['xy'].to(device))
+            #output['grade_loss'] = F_grade_loss(grade,  batch['grade'].to(device))
 
             if False: #turn on dynamic matching in later stage of training
                 index, valid = do_dynamic_match_truth_05(xy, batch['xy'].to(device))

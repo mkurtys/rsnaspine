@@ -26,7 +26,8 @@ def F_zxy_loss(z, xy,  z_truth, xy_truth):
 
 # consider adding mask for layers without label
 def F_focal_heatmap_loss(heatmap, gt, D):
-    heatmap =  torch.split_with_sizes(heatmap, D, 0)  
+    #  D,num_point,num_grade, H,W = p.shape
+    heatmap =  torch.split_with_sizes(heatmap, D, 0)
     truth =  torch.split_with_sizes(truth, D, 0)
     num_image = len(heatmap)
 
@@ -38,7 +39,8 @@ def F_focal_heatmap_loss(heatmap, gt, D):
         neg_weights = torch.pow(1 - gt_i[neg_inds], 4)
 
         loss = 0
-        for pred in heatmap[i]:
+        heatmap_i = heatmap[i].reshape(-1, *heatmap[0].shape[2:])
+        for pred in heatmap_i:
             pos_pred = pred[pos_inds]
             neg_pred = pred[neg_inds]
 
