@@ -13,7 +13,7 @@ from torch.utils.data import Dataset, DataLoader
 from spine.read import read_study
 from spine.task.split import train_val_split
 from spine.transforms import image_to_patient_coords_3d, patient_coords_to_image_2d
-
+from spine.utils.heatmap import heatmap_2d_encoder, heatmap_3d_encoder
 
 
 import pytorch_lightning as pl
@@ -163,8 +163,8 @@ class SpineDataset(Dataset):
                 if min_z > abs(coords_2d[2]):
                     min_z = abs(coords_2d[2])
                     min_z_instance_number = instance_meta.instance_number
-                if is_inside:
-                    return coords_2d, instance_meta.instance_number, min_z, i
+                # if is_inside:
+                #     return coords_2d, instance_meta.instance_number, min_z, i
                 
             return coords_2d, min_z_instance_number, min_z, i
                 
@@ -181,6 +181,11 @@ class SpineDataset(Dataset):
             saggital_t2_coords_xy[row["condition_spec_idx"]] = row["saggital_t2_stir"][0][:2]
             saggital_t2_coords_z[row["condition_spec_idx"]] = row["saggital_t2_stir"][-1]
             saggital_t2_coords_mask[row["condition_spec_idx"]] = 1
+        saggital_t2_coords_zyx = np.concatenate([saggital_t2_coords_xy, saggital_t2_coords_z.reshape(-1,1)], axis=1)[:,::-1]
+        heatmap = heatmap_3d_encoder(study.get_saggital_t2_stir(),
+                           stride=(4,4), gt_coords=saggital_t2_coords_zyx,
+                           gt_classes=saggital_t2_coords_mask,
+                           sigma=1)
 
         saggital_t2_slices_count =  study.get_saggital_t2_stir().volume.shape[0]
         middle_slice = saggital_t2_slices_count//2 + 1
@@ -193,13 +198,14 @@ class SpineDataset(Dataset):
         saggital_t2_volume = study.get_saggital_t2_stir().volume
         depth, height, width = study.get_saggital_t2_stir().volume.shape
 
+
         if self.transform:
             image = self.transform(image)
         if self.target_transform:
             label = self.target_transform(label)
         d = {    "study_id": int(study_id),
                  "D": depth,
-                 "saggital_t2_image": saggital_t2_volume,
+                 "image": saggital_t2_volume,
                   # "axial_t2": study.get_axial_t2().volume,
                  "saggital_t2_stir_coords_xy": saggital_t2_coords_xy,
                  "saggital_t2_stir_coords_z": saggital_t2_coords_z,
@@ -287,14 +293,14 @@ if __name__ == "__main__":
                                     train=train.query("fold !=  0"),
                                     coordinates=coordinates,
                                     descriptions=descriptions,
-                                    resize=(226,226)
+                                    resize=(224,224)
                                     )
 
     val_spine_dataset = SpineDataset(dicom_dir=dataset_path/"train_images/",
                                     train=train.query("fold ==  0"),
                                     coordinates=coordinates,
                                     descriptions=descriptions,
-                                    resize=(226,226)
+                                    resize=(224,224)
                                     )
     spine_data_module = SpineDataModule(train_dataset=train_spine_dataset, 
                                         validation_dataset=val_spine_dataset,
@@ -341,9 +347,10 @@ if __name__ == "__main__":
 
     # trainer.fit(model, spine_data_module.train_dataloader(), spine_data_module.val_dataloader() if Config.validate else None)
 
-
+    from spine.model.enc2d3d import Enc2d3d
+    net = Enc2d3d(pretrained=True)
     for x in spine_data_module.train_dataloader():
-        for(k,v) in x.items():
-            print(k, v.shape)
+        net.forward(x, output_types=())
+
         #print(x[0].shape)
         #print(type(x[0]))

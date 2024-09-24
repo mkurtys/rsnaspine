@@ -29,6 +29,8 @@ class MyDecoderBlock3d(nn.Module):
     def forward(self, x, skip=None):
         x = F.interpolate(x, scale_factor=(1,2,2), mode='nearest')
         if skip is not None:
+            # print('skip',skip.shape)
+            # print('x',x.shape)
             x = torch.cat([x, skip], dim=1)
             x = self.attention1(x)
         x = self.conv1(x)
@@ -46,7 +48,7 @@ class MyUnetDecoder3d(nn.Module):
         super().__init__()
         self.center = nn.Identity()
 
-        i_channel = [in_channel, ] + out_channel[:-1]
+        i_channel = [in_channel] + out_channel[:-1]
         s_channel = skip_channel
         o_channel = out_channel
         block = [
