@@ -24,7 +24,7 @@ import enum
 import wandb
 
 
-dataset_path = Path("/Users/mkurtys/datasets/spine")
+dataset_path = Path("/home/mkurtys/projects/datasets/spine")
 
 class WandbMode:
     OFFLINE = "offline"
@@ -42,12 +42,10 @@ class WandbConfig:
     watch_log_freq = 100
 
 class Config:
-
     use_wandb = False
-
     root_data_dir = str(dataset_path)
-    batch_size = 4
-    num_workers = 1
+    batch_size = 6
+    num_workers = 2
     num_sanity_val_steps=0
     num_sanity_train_steps=0 
     # model_checkpoint_source = ModelCheckpointSource.NO_CHECKPOINT
@@ -68,7 +66,7 @@ class Config:
     # TODO - parallel computations
     num_devices=1
     validate=True
-    debug=True
+    debug=False
 
 random.seed(0)
 np.random.seed(0)
@@ -202,7 +200,7 @@ class SpineDataset(Dataset):
         # heatmap.expand(25, -1, -1, -1)
         # heatmap (25, d, h, w) -> (d, 25, h, w)
         heatmap = torch.permute(heatmap, (1,0,2,3))
-        print("heatmap shape", heatmap.shape)
+        # print("heatmap shape", heatmap.shape)
         
 
         saggital_t2_slices_count =  study.get_saggital_t2_stir().volume.shape[0]
@@ -265,6 +263,7 @@ class SpineDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
+            collate_fn=custom_collate_fn
         )
         return valid_loader
 
@@ -336,8 +335,8 @@ if __name__ == "__main__":
 
     checkpoint_cb= ModelCheckpoint  (
         dirpath="checkpoints",
-        monitor="valid/total_loss" if Config.validate else "train/total_loss",
-        filename="ckpt_epoch={epoch:02d}_valid_total={valid/total_loss:.2f}" if Config.validate else "ckpt_epoch={epoch:02d}_train_total={train/total_loss:.2f}",
+        monitor="val/loss" if Config.validate else "train/loss",
+        filename="ckpt_epoch={epoch:02d}_loss={val/loss:.2f}" if Config.validate else "ckpt_epoch={epoch:02d}_loss={train/loss:.2f}",
         auto_insert_metric_name=False,
         save_top_k=3,
         mode="min",
@@ -365,7 +364,7 @@ if __name__ == "__main__":
     # from spine.model.enc2d3d import Enc2d3d
     # net = Enc2d3d(pretrained=True)
     # for x in spine_data_module.train_dataloader():
-    #    net.forward(x, output_types=("loss"))
+    #     net.forward(x, output_types=("loss"))
 
     from spine.model.model import RSNASpineLightningModule
     model = RSNASpineLightningModule(lr=Config.lr, max_steps=Config.t_max)

@@ -46,9 +46,9 @@ def F_focal_heatmap_loss(heatmap, gt, D):
         heatmap_i = heatmap[i].reshape(-1, *heatmap[i].shape[2:])
 
         # shapes -> (num_point*num_grade, dd, hh, ww)
-        print("gt_i ",gt_i.shape)
-        print("heatmap_i ",heatmap_i.shape)
-        print("pos_inds ",pos_inds.shape)
+        # print("gt_i ",gt_i.shape)
+        # print("heatmap_i ",heatmap_i.shape)
+        # print("pos_inds ",pos_inds.shape)
         pos_pred = heatmap_i[pos_inds]
         neg_pred = heatmap_i[neg_inds]
 

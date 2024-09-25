@@ -83,8 +83,8 @@ class Enc2d3d(nn.Module):
         # print('xy',xy.shape)
         # print('z',z.shape)
         # print('grade',grade.shape)
-        for h in heatmap:
-            print(h.shape)
+        # for h in heatmap:
+        #    print(h.shape)
 
         # points, grades, d,h,w -> d, points, grades, h, w
         # heatmap = torch.cat([all.permute(2,0,1,3,4) for all in heatmap])

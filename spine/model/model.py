@@ -27,16 +27,7 @@ class RSNASpineLightningModule(pl.LightningModule):
         # self.classification_head  = AbdTraumaClassificationHead(out_features)
         # self.loss_module = AbdTraumaLoss()
         self.model = Enc2d3d(pretrained=True)
-
-        multiclass_metrics = MetricCollection([
-            MulticlassAccuracy(3), MulticlassPrecision(3), MulticlassRecall(3)
-        ])
-        binary_metrics = MetricCollection([
-            BinaryAccuracy(), BinaryPrecision(), BinaryRecall()
-        ])
-
-        self.train_metrics = binary_metrics.clone(prefix='train/injury_')
-        self.valid_metrics = binary_metrics.clone(prefix='val/injury_')
+        self.validation_step_outputs = []
     
     def configure_optimizers(self):
         optimizer = optim.SGD(self.model.parameters(), lr=self.hparams.lr)
