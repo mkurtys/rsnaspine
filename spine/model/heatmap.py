@@ -37,5 +37,5 @@ def heatmap_to_grade(heatmap):
         num_point, num_grade, D, H, W = heatmap[i].shape
         g = torch.sum(heatmap[i], dim=(2,3,4))
         grade.append(g)
-    grade = torch.stack(grade)
+    grade = torch.stack(grade) # (num_image, num_point, num_grade)
     return grade

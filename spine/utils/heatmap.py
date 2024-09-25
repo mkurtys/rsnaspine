@@ -26,7 +26,7 @@ def heatmap_2d_encoder(heatmap_size, gt_coords, gt_classes, num_classes, sigma, 
 
     return heatmap
 
-
+# TODO generate coordinates for centers of each voxel
 def generate_world_mesh_coords(series: SpineSeries, stride):
     # x,y,z -> d,h,w
     image_orientation_patient = np.stack([ inst.orientation for inst in series.meta]) # (N, 6) -> concat (N,6)(N,3) -> (N,9) -> (N, 1, 1, 3, 3)
@@ -50,11 +50,11 @@ def generate_world_mesh_coords(series: SpineSeries, stride):
     coords = np.expand_dims(coords, axis=-2)
     return (image_position_patient+coords@image_orientation_patient*pixel_spacing).squeeze()
 
-def heatmap_3d_encoder(series: SpineSeries, stride, gt_coords, gt_classes, sigma):
+
+def heatmap_3d_encoder(series: SpineSeries, stride, gt_coords, gt_classes, num_classes, sigma):
     mesh = generate_world_mesh_coords(series, stride)
-    num_classes = len(gt_coords)
-    heatmap =  np.zeros((num_classes, *mesh.shape[:-1]))
-    
+    num_points = len(gt_classes)
+    heatmap =  np.zeros((num_points*num_classes, *mesh.shape[:-1]))    
     # print("mesh shape ", mesh.shape)
     # print("volume shape ", series.volume.shape)
     # print("mesh shape ", mesh.shape[:-1])
@@ -62,10 +62,14 @@ def heatmap_3d_encoder(series: SpineSeries, stride, gt_coords, gt_classes, sigma
     gt_coords = gt_coords.reshape(-1,1,1,1,3)
 
     for i, (gt_coord, gt_class) in enumerate(zip(gt_coords, gt_classes)):
+        class_idx =  gt_class # np.where(gt_class)[0]
+        if class_idx<0:
+            continue
+        class_heatmap = heatmap[3*i+class_idx]
         distance = np.square((gt_coord - mesh)).sum(axis=-1)
-        heatmap[i] = _gaussian(distance, sigma).reshape(mesh.shape[:-1])
-        heatmap_max = heatmap[i].max()
-        heatmap[i] = heatmap[i] / heatmap_max if heatmap_max > 0 else heatmap[i]
+        class_heatmap = _gaussian(distance, sigma).reshape(mesh.shape[:-1])
+        heatmap_max = class_heatmap.max()
+        class_heatmap = class_heatmap / heatmap_max if heatmap_max > 0 else class_heatmap
     return heatmap
 
 

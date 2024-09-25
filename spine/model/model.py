@@ -8,24 +8,25 @@ from torchmetrics.classification import MulticlassAccuracy, MulticlassPrecision,
 import pytorch_lightning as pl
 import torch
 from transformers import get_cosine_schedule_with_warmup
+from typing import Optional
+import numpy as np
+from .enc2d3d import Enc2d3d
+
 
 class RSNASpineLightningModule(pl.LightningModule):
-    def __init__(self,
-                 base_model,
-                 neck,
-                 loss
-                ):
+    def __init__(self, lr: float, max_steps: int):
         super().__init__()
         # save_hyperparameters() is used to specify which init arguments should 
         # be saved in the checkpoint file to be used to instantiate the model
         # from the checkpoint later.
-        self.save_hyperparameters(ignore=['base_model'])
+        self.save_hyperparameters()
 
 
-        self.base_model = base_model
-        self.neck = neck
+        # self.base_model = base_model
+        # self.neck = neck
         # self.classification_head  = AbdTraumaClassificationHead(out_features)
         # self.loss_module = AbdTraumaLoss()
+        self.model = Enc2d3d(pretrained=True)
 
         multiclass_metrics = MetricCollection([
             MulticlassAccuracy(3), MulticlassPrecision(3), MulticlassRecall(3)
@@ -38,86 +39,58 @@ class RSNASpineLightningModule(pl.LightningModule):
         self.valid_metrics = binary_metrics.clone(prefix='val/injury_')
     
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.model.parameters(), lr=self.cfg.optimizer.lr)
+        optimizer = optim.SGD(self.model.parameters(), lr=self.hparams.lr)
         scheduler = get_cosine_schedule_with_warmup(
-            optimizer, num_training_steps=self.trainer.max_steps, **self.cfg.scheduler
+            optimizer, num_training_steps=self.hparams.max_steps, num_warmup_steps=0
         )
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
+    def forward(self, batch, output_types=('infer', 'loss')):
+        return self.model(batch, output_types)
         
-    def forward(self, x):
-        x = self.base_model(x)
-        if self.neck:
-            x = self.neck(x)
-        bowel, extravasation, kidney, liver, spleen = self.classification_head(x)
-        return  bowel, extravasation, kidney, liver, spleen
-
-
-    def predict(self, x):
-        bowel, extravasation, kidney, liver, spleen = self.forward(x)
-        return F.sigmoid(bowel), F.sigmoid(extravasation), F.softmax(kidney), F.softmax(liver), F.softmax(spleen)
-
-    
     def training_step(self, batch, batch_idx):
+        return self.__share_step(batch, 'train')
         
-        imgs = batch["image"]
-        batch_size = imgs.shape[0]
-        bowel_target, extravasation_target, kidney_target, liver_target, spleen_target = batch["bowel_target"], batch["extravasation_target"], batch["kidney_target"], batch["liver_target"], batch["spleen_target"]
-        anyinjury_target = batch["any_injury_target_extra"]
-        bowel, extravasation, kidney, liver, spleen = self(imgs)
-        # print(bowel.shape, extravasation.shape, kidney.shape, liver.shape, spleen.shape)
-        (b_loss, e_loss, k_loss, l_loss, s_loss), total_loss = \
-            self.loss_module(bowel, extravasation, kidney, liver, spleen,
-                             bowel_target, extravasation_target, kidney_target, liver_target, spleen_target)
-
-        probs = F.sigmoid(bowel), F.sigmoid(extravasation), F.softmax(kidney), F.softmax(liver), F.softmax(spleen)
-        any_injury = self._compute_any_injury_probability(probs)
-        any_injury_metrics_out = self.train_metrics_anyinjury(any_injury, anyinjury_target)
-
-        # true_positives, false_positives, true_negatives, false_negatives, sup = self.train_stat_scores(predictions, target)
-        # train_loss = self.train_loss(out, target)
-        to_log = {'train/bowel_loss': b_loss.item(),
-                  'train/extravasation_loss': e_loss.item(),
-                  'train/kidney_loss': k_loss.item(),
-                  'train/liver_loss': l_loss.item(),
-                  'train/spleen_loss': s_loss.item()
-                 }
-        self.log('train/total_loss', total_loss.item(), on_step=True, on_epoch=True, batch_size=batch_size)
-        self.log_dict(to_log, on_step=False, on_epoch=True, batch_size=batch_size)
-        self.log_dict(any_injury_metrics_out, on_epoch=True, batch_size=batch_size)
-        return total_loss 
-    
-    def on_train_epoch_end(self):
-        # log epoch metric
-        # self.log_dict({**self.train_metrics_anyinjury}, on_epoch=True)
-        pass
-    
     def validation_step(self, batch, batch_idx):
-        imgs = batch["image"]
-        batch_size = imgs.shape[0]
-        bowel_target, extravasation_target, kidney_target, liver_target, spleen_target = batch["bowel_target"], batch["extravasation_target"], batch["kidney_target"], batch["liver_target"], batch["spleen_target"]
-        anyinjury_target = batch["any_injury_target_extra"]
-        bowel, extravasation, kidney, liver, spleen = self(imgs)
+        return self.__share_step(batch, 'val')
         
-        (b_loss, e_loss, k_loss, l_loss, s_loss), total_loss = \
-            self.loss_module(bowel, extravasation, kidney, liver, spleen,
-                             bowel_target, extravasation_target, kidney_target, liver_target, spleen_target)
+    def __share_step(self, batch, mode: str):
+        if mode == 'train':
+            output_type = ('loss',)
+        else:
+            output_type = ('infer', 'loss')
 
-        probs = F.sigmoid(bowel), F.sigmoid(extravasation), F.softmax(kidney), F.softmax(liver), F.softmax(spleen)
-        
-        any_injury = self._compute_any_injury_probability(probs)
-        any_injury_metrics_out = self.valid_metrics_anyinjury(any_injury, anyinjury_target)
-
+        output = self.model(batch, output_type)
+        loss: torch.Tensor = output["loss"]
         to_log = {
-            'valid/bowel_loss': b_loss.item(),
-            'valid/extravasation_loss': e_loss.item(),
-            'valid/kidney_loss': k_loss.item(),
-            'valid/liver_loss': l_loss.item(),
-            'valid/spleen_loss': s_loss.item(),
-            'valid/total_loss': total_loss.item()
+            f'{mode}/loss': output["loss"].detach().item(),
+            f'{mode}/heatmap_loss': output["heatmap_loss"].detach().item(),
+            f'{mode}/grade_loss': output["heatmap_loss"].detach().item(),
             }
+        
+        if mode == 'val':
+            self.validation_step_outputs.append(
+                (
+                    output["grade"].detach().cpu().numpy(),
+                )
+            )
+        
+        self.log_dict(
+            to_log,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            prog_bar=True,
+        )
+        
+        return loss
+        
+    def on_validation_epoch_end(self):
+        grades = np.concatenate([x[0] for x in self.validation_step_outputs])
+        # preds = np.concatenate([x[1] for x in self.validation_step_outputs])
+        # losses = np.array([x[2] for x in self.validation_step_outputs])
+        # loss = losses.mean()        
+        self.validation_step_outputs.clear()
 
-        # probs = F.sigmoid(bowel), F.sigmoid(extravasation), F.softmax(kidney), F.softmax(liver), F.softmax(spleen)
-        self.log_dict(to_log, on_step=False, on_epoch=True, batch_size=batch_size)
-        self.log_dict(any_injury_metrics_out, on_epoch=True, batch_size=batch_size)
-        return total_loss
+    def predict(self, batch):
+        return self.model(batch, ('infer',))["grade"].detach().cpu()

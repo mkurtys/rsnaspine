@@ -63,12 +63,12 @@ class Config:
     min_lr= 1e-4
     weight_decay=5e-3
     # mixed-precision
-    precision=16 if torch.cuda.is_available() else 32
+    precision=16
     accelerator="auto"   # auto, gpu or cpu
     # TODO - parallel computations
     num_devices=1
     validate=True
-    debug=False
+    debug=True
 
 random.seed(0)
 np.random.seed(0)
@@ -142,6 +142,15 @@ class SpineDataset(Dataset):
                          series_descriptions=[s_description for _,s_description in series_desc],
                          resize=self.resize
                         )
+        
+        study_severity = train_row.values[1:-1].copy().astype(int)
+        # 5 levels, 5 points, 3 grades = 75
+        study_severity = study_severity
+        # study_severity_array = np.zeros((25,3), dtype=int)
+        # study_severity_mask = study_severity!=-1
+        # study_severity_array[study_severity_mask, study_severity] = 1
+        #study_severity_array[~study_severity_mask, :] = -1
+
         series_scales = study.get_series_scales()
 
         study_coords = self.coordinates.query(f"study_id == {study_id}")
@@ -174,6 +183,7 @@ class SpineDataset(Dataset):
         study_coords["saggital_t2_stir"] = study_coords["world"].apply(lambda x: _backproject_to_image_coords(x, study.get_saggital_t2_stir()))
 
         study_coords["condition_spec_idx"] = study_coords["condition_spec"].map(condition_spec_to_idx)
+
         saggital_t2_coords_xy = np.zeros((25, 2), dtype=np.float32)
         saggital_t2_coords_z = np.zeros(25, dtype=np.float32)
         saggital_t2_coords_mask = np.zeros(25, dtype=int)
@@ -184,16 +194,19 @@ class SpineDataset(Dataset):
         saggital_t2_coords_zyx = np.concatenate([saggital_t2_coords_xy, saggital_t2_coords_z.reshape(-1,1)], axis=1)[:,::-1]
         heatmap = heatmap_3d_encoder(study.get_saggital_t2_stir(),
                            stride=(4,4), gt_coords=saggital_t2_coords_zyx,
-                           gt_classes=saggital_t2_coords_mask,
+                           gt_classes=study_severity,
+                           num_classes=3,
                            sigma=1)
+        
+        heatmap= torch.from_numpy(heatmap).float()
+        # heatmap.expand(25, -1, -1, -1)
+        # heatmap (25, d, h, w) -> (d, 25, h, w)
+        heatmap = torch.permute(heatmap, (1,0,2,3))
+        print("heatmap shape", heatmap.shape)
+        
 
         saggital_t2_slices_count =  study.get_saggital_t2_stir().volume.shape[0]
         middle_slice = saggital_t2_slices_count//2 + 1
-
-        study_severity = train_row.values[1:-1].copy().astype(int)
-        study_severity_mask = study_severity>=0
-        study_severity_array = np.zeros(5*5*3).reshape(25,3)
-        study_severity_array[ np.where(study_severity_mask), study_severity[study_severity_mask] ] = 1
 
         saggital_t2_volume = study.get_saggital_t2_stir().volume
         depth, height, width = study.get_saggital_t2_stir().volume.shape
@@ -210,8 +223,8 @@ class SpineDataset(Dataset):
                  "saggital_t2_stir_coords_xy": saggital_t2_coords_xy,
                  "saggital_t2_stir_coords_z": saggital_t2_coords_z,
                  "saggital_t2_stir_coords_mask": saggital_t2_coords_mask,
-                 "severity":  study_severity,
-                 "severity_mask": study_severity_mask
+                 "grade":  study_severity,
+                 "heatmap": heatmap
         }
         return d
     
@@ -220,7 +233,7 @@ class SpineDataset(Dataset):
 # batchify dict with default funcitons
 def custom_collate_fn(batch):
     def _concat_imgs_leave_other(x, key):
-        if "image" in key:
+        if "image" in key or "heatmap" in key:
             return torch.tensor(np.concatenate(x))
         else:
             return torch.utils.data._utils.collate.default_collate(x)
@@ -285,9 +298,11 @@ if __name__ == "__main__":
     # coordinates = pd.merge(on=["study_id", "condition_level"], left=coordinates, right=train_melt, how="left")
     coordinates = pd.merge(on=["study_id", "series_id"], left=coordinates, right=descriptions, how="left")
 
-
-    fold_df = train_val_split(train_melt)
-    train = pd.merge(on="study_id", left=train, right=fold_df, how="left")
+    if Config.validate:
+        fold_df = train_val_split(train_melt)
+        train = pd.merge(on="study_id", left=train, right=fold_df, how="left")
+    else:
+        train["fold"] = 1
 
     train_spine_dataset = SpineDataset(dicom_dir=dataset_path/"train_images/",
                                     train=train.query("fold !=  0"),
@@ -347,10 +362,14 @@ if __name__ == "__main__":
 
     # trainer.fit(model, spine_data_module.train_dataloader(), spine_data_module.val_dataloader() if Config.validate else None)
 
-    from spine.model.enc2d3d import Enc2d3d
-    net = Enc2d3d(pretrained=True)
-    for x in spine_data_module.train_dataloader():
-        net.forward(x, output_types=())
+    # from spine.model.enc2d3d import Enc2d3d
+    # net = Enc2d3d(pretrained=True)
+    # for x in spine_data_module.train_dataloader():
+    #    net.forward(x, output_types=("loss"))
+
+    from spine.model.model import RSNASpineLightningModule
+    model = RSNASpineLightningModule(lr=Config.lr, max_steps=Config.t_max)
+    trainer.fit(model, spine_data_module.train_dataloader(), spine_data_module.val_dataloader() if Config.validate else None)
 
         #print(x[0].shape)
         #print(type(x[0]))

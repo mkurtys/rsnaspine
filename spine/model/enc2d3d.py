@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 import timm
 from spine.model.blocks import MyUnetDecoder3d, pvtv2_encode
-from spine.model.loss import F_heatmap_loss, F_zxy_loss, F_grade_loss, F_focal_heatmap_loss
+from spine.model.loss import F_zxy_loss, F_grade_loss, F_focal_heatmap_loss
 from spine.model.heatmap import heatmap_to_coord, heatmap_to_grade
 
 
@@ -83,9 +83,13 @@ class Enc2d3d(nn.Module):
         # print('xy',xy.shape)
         # print('z',z.shape)
         # print('grade',grade.shape)
+        for h in heatmap:
+            print(h.shape)
 
-        heatmap = torch.cat([all.permute(2,0,1,3,4) for all in heatmap])
-        print("heatmap shape ",heatmap.shape)
+        # points, grades, d,h,w -> d, points, grades, h, w
+        # heatmap = torch.cat([all.permute(2,0,1,3,4) for all in heatmap])
+        # heatmap = torch.concatenate(heatmap)
+        # print("heatmap shape ",heatmap.shape)
         #print('heatmap',heatmap.shape)
 
         output = {}
@@ -105,6 +109,8 @@ class Enc2d3d(nn.Module):
                 output['grade_loss'] = F_grade_loss(grade[valid],  truth_matched[valid])
             else:
                 output['grade_loss'] = F_grade_loss(grade,  batch['grade'].to(device))
+
+            output['loss'] = output['heatmap_loss'] + output['zxy_loss'] + output['grade_loss']
 
         if 'infer' in output_types:
             output['heatmap'] = heatmap
