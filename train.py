@@ -22,9 +22,12 @@ from pytorch_lightning.loggers.wandb import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping, RichProgressBar
 import enum
 import wandb
+import os
 
+def _to_path_or_none(path):
+    return Path(path) if path is not None else None
 
-dataset_path = Path("/home/mkurtys/projects/datasets/spine")
+dataset_path =  _to_path_or_none(os.environ.get("SPINE_DATASET")) or Path("/home/mkurtys/projects/datasets/spine")
 
 class WandbMode:
     OFFLINE = "offline"
@@ -150,11 +153,13 @@ class SpineDataset(Dataset):
         #study_severity_array[~study_severity_mask, :] = -1
 
         series_scales = study.get_series_scales()
-
         study_coords = self.coordinates.query(f"study_id == {study_id}")
         study_coords = pd.merge(on="series_id", left=study_coords, right=series_scales, how="left")
         study_coords["x"] = study_coords["x"]*study_coords["scale"]
         study_coords["y"] = study_coords["y"]*study_coords["scale"]
+
+        if len(study_coords) == 0:
+            pass
 
         def _world_coords(x):
             row_series = study.get_series(x["series_id"])
