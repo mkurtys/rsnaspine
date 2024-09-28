@@ -110,7 +110,7 @@ class Enc2d3d(nn.Module):
             else:
                 output['grade_loss'] = F_grade_loss(grade,  batch['grade'].to(device))
 
-            output['loss'] = output['heatmap_loss'] + output['zxy_loss'] + output['grade_loss']
+            output['loss'] = output['heatmap_loss'] + output['grade_loss'] # + output['zxy_loss']
 
         if 'infer' in output_types:
             output['heatmap'] = heatmap

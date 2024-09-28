@@ -14,7 +14,7 @@ from spine.read import read_study
 from spine.task.split import train_val_split
 from spine.transforms import image_to_patient_coords_3d, patient_coords_to_image_2d
 from spine.utils.heatmap import heatmap_2d_encoder, heatmap_3d_encoder
-
+from spine.model.model import RSNASpineLightningModule
 
 import pytorch_lightning as pl
 from pytorch_lightning.loggers.tensorboard import TensorBoardLogger
@@ -48,7 +48,7 @@ class Config:
     use_wandb = False
     root_data_dir = str(dataset_path)
     batch_size = 6
-    num_workers = 2
+    num_workers = 1
     num_sanity_val_steps=0
     num_sanity_train_steps=0 
     # model_checkpoint_source = ModelCheckpointSource.NO_CHECKPOINT
@@ -174,6 +174,7 @@ class SpineDataset(Dataset):
                 
             return coords_2d, min_z_instance_number, min_z, i
         
+        
         if len(study_coords) > 0:
             study_coords["world"] = study_coords.apply(_world_coords, axis=1)
             axial_t2_backproject = study_coords["world"].apply(lambda x: _backproject_to_image_coords(x, study.get_axial_t2()))
@@ -184,20 +185,26 @@ class SpineDataset(Dataset):
         saggital_t2_coords_xy = np.zeros((25, 2), dtype=np.float32)
         saggital_t2_coords_z = np.zeros(25, dtype=np.float32)
         saggital_t2_coords_mask = np.zeros(25, dtype=int)
+        
+        world_coords = np.zeros((25, 3), dtype=np.float32)
+        world_coords_mask = np.zeros(25, dtype=int)
         for i, row in study_coords.iterrows():
             saggital_t2_coords_xy[row["condition_spec_idx"]] = row["saggital_t2_stir"][0][:2]
             saggital_t2_coords_z[row["condition_spec_idx"]] = row["saggital_t2_stir"][-1]
             saggital_t2_coords_mask[row["condition_spec_idx"]] = 1
+            world_coords_mask[row["condition_spec_idx"]] = 1
+            world_coords[row["condition_spec_idx"]] = row["world"][::-1] #x,y,z -> z,y,x
         saggital_t2_coords_zyx = np.concatenate([saggital_t2_coords_xy, saggital_t2_coords_z.reshape(-1,1)], axis=1)[:,::-1]
+
+        # print(world_coords)
         heatmap = heatmap_3d_encoder(study.get_saggital_t2_stir(),
-                           stride=(4,4), gt_coords=saggital_t2_coords_zyx,
+                           stride=(4,4),
+                           gt_coords=world_coords,
+                           coords_mask=world_coords_mask,
                            gt_classes=study_severity,
                            num_classes=3,
-                           sigma=1)
-        
+                           sigma=2)   
         heatmap= torch.from_numpy(heatmap).float()
-        # heatmap.expand(25, -1, -1, -1)
-        # heatmap (25, d, h, w) -> (d, 25, h, w)
         heatmap = torch.permute(heatmap, (1,0,2,3))
         # print("heatmap shape", heatmap.shape)
         
@@ -273,7 +280,10 @@ if __name__ == "__main__":
     submissions = pd.read_csv(dataset_path/"sample_submission.csv")
     train = pd.read_csv(dataset_path/"train.csv")
 
-    print(train.columns.tolist())
+    has_t2_stir = descriptions.sort_values(["study_id", "series_description"]).groupby("study_id")["series_description"].apply(lambda x: (x=="Sagittal T2/STIR").any())
+    valid_studies = has_t2_stir[has_t2_stir].index
+    train = train[train["study_id"].isin(valid_studies)]
+
 
     train_melt = train.melt(id_vars="study_id", var_name="condition_spec", value_name="severity").sort_values(["study_id", "condition_spec"])
     train_melt["severity_code"] = train_melt["severity"].map(condition_severity_map)
@@ -285,7 +295,6 @@ if __name__ == "__main__":
     train.fillna(-1, inplace=True)
     for c in train.columns[1:]:
         train[c] = train[c].astype(int)
-    print(train.dtypes)
 
     coordinates["instance_number"] = coordinates["instance_number"].astype(int)
     coordinates["instance_number"] = coordinates["instance_number"]
@@ -362,11 +371,10 @@ if __name__ == "__main__":
 
     # from spine.model.enc2d3d import Enc2d3d
     # net = Enc2d3d(pretrained=True)
-    for x in spine_data_module.train_dataloader():
-        pass
+    #for x in spine_data_module.train_dataloader():
+    #    pass
     #     net.forward(x, output_types=("loss"))
 
-    from spine.model.model import RSNASpineLightningModule
     model = RSNASpineLightningModule(lr=Config.lr, max_steps=Config.t_max)
     trainer.fit(model, spine_data_module.train_dataloader(), spine_data_module.val_dataloader() if Config.validate else None)
 

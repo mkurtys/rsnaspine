@@ -10,6 +10,7 @@ def F_grade_loss(grade, truth):
     g = grade.reshape(-1,3)
     t = truth.reshape(-1)
 
+    # go for log softmax instead?
     loss = F.nll_loss( torch.clamp(g, eps, 1-eps).log(), t,weight=weight, ignore_index=-1)
     #loss = F.cross_entropy(g, t,weight=weight, ignore_index=-1)
     return loss
@@ -56,6 +57,7 @@ def F_focal_heatmap_loss(heatmap, gt, D):
         neg_loss = torch.log(1 - neg_pred) * torch.pow(neg_pred, 2) * neg_weights
 
         num_pos  = pos_inds.float().sum()
+        # print("num_pos ",num_pos)
         pos_loss = pos_loss.sum()
         neg_loss = neg_loss.sum()
 

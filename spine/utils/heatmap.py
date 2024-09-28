@@ -31,14 +31,13 @@ def generate_world_mesh_coords(series: SpineSeries, stride):
     # x,y,z -> d,h,w
     image_orientation_patient = np.stack([ inst.orientation for inst in series.meta]) # (N, 6) -> concat (N,6)(N,3) -> (N,9) -> (N, 1, 1, 3, 3)
     image_orientation_patient = np.concatenate([image_orientation_patient, np.zeros((image_orientation_patient.shape[0],3))], axis=1)
-    image_orientation_patient = image_orientation_patient.reshape(-1,1,1,3,3).swapaxes(-1,-2)[...,::-1, ::-1]
-    # print("IOP ", image_orientation_patient[0,0,...])
+    image_orientation_patient = image_orientation_patient.reshape(-1,1,1,3,3)[...,::-1, ::-1]
 
     image_position_patient = np.stack([ inst.position for inst in series.meta]).reshape(-1,1,1,1,3)[...,::-1]
 
-    pixel_spacing = np.stack([ inst.pixel_spacing for inst in series.meta])[...,::-1]
+    pixel_spacing = np.stack([ inst.pixel_spacing for inst in series.meta])
     # add one as third dimmension of pixel spacing
-    pixel_spacing = np.concatenate([pixel_spacing, np.ones((pixel_spacing.shape[0],1))], axis=-1)
+    pixel_spacing = np.concatenate([pixel_spacing, np.ones((pixel_spacing.shape[0],1))], axis=-1)[...,::-1]
     pixel_spacing = pixel_spacing.reshape(-1,1,1,1,3)
     d, h, w = series.volume.shape
     ii, jj, kk = np.meshgrid(
@@ -47,29 +46,31 @@ def generate_world_mesh_coords(series: SpineSeries, stride):
                          np.arange(0, w, stride[1]),
                          indexing='ij')
     coords = np.stack([ii, jj, kk], axis=-1)
+
     coords = np.expand_dims(coords, axis=-2)
-    return (image_position_patient+coords@image_orientation_patient*pixel_spacing).squeeze()
+    coords = (image_position_patient+((coords*pixel_spacing)@image_orientation_patient)).squeeze()
+    return coords
 
-
-def heatmap_3d_encoder(series: SpineSeries, stride, gt_coords, gt_classes, num_classes, sigma):
+# TODO it is not resilent for coords outside the volume
+def heatmap_3d_encoder(series: SpineSeries, stride, gt_coords, coords_mask, gt_classes, num_classes, sigma):
     mesh = generate_world_mesh_coords(series, stride)
-    num_points = len(gt_classes)
-    heatmap =  np.zeros((num_points*num_classes, *mesh.shape[:-1]))    
-    # print("mesh shape ", mesh.shape)
-    # print("volume shape ", series.volume.shape)
-    # print("mesh shape ", mesh.shape[:-1])
-    # print("gt_coords shape ", gt_coords.shape)
+    num_points = 25
+    heatmap =  np.zeros((num_points*num_classes, *mesh.shape[:-1]))
+    if gt_coords is None:
+        return heatmap  
     gt_coords = gt_coords.reshape(-1,1,1,1,3)
 
-    for i, (gt_coord, gt_class) in enumerate(zip(gt_coords, gt_classes)):
-        class_idx =  gt_class # np.where(gt_class)[0]
-        if class_idx<0:
+    for i, (gt_coord, mask, gt_class) in enumerate(zip(gt_coords, coords_mask, gt_classes)):
+        class_idx = gt_class # np.where(gt_class)[0]
+        if class_idx<0 or not mask:
             continue
         class_heatmap = heatmap[3*i+class_idx]
         distance = np.square((gt_coord - mesh)).sum(axis=-1)
         class_heatmap = _gaussian(distance, sigma).reshape(mesh.shape[:-1])
         heatmap_max = class_heatmap.max()
-        class_heatmap = class_heatmap / heatmap_max if heatmap_max > 0 else class_heatmap
+        if heatmap_max > 0:
+            class_heatmap /= heatmap_max
+        heatmap[3*i+class_idx] = class_heatmap
     return heatmap
 
 

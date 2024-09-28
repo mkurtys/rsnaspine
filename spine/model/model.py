@@ -56,7 +56,7 @@ class RSNASpineLightningModule(pl.LightningModule):
         to_log = {
             f'{mode}/loss': output["loss"].detach().item(),
             f'{mode}/heatmap_loss': output["heatmap_loss"].detach().item(),
-            f'{mode}/grade_loss': output["heatmap_loss"].detach().item(),
+            f'{mode}/grade_loss': output["grade_loss"].detach().item(),
             }
         
         if mode == 'val':
@@ -65,10 +65,12 @@ class RSNASpineLightningModule(pl.LightningModule):
                     output["grade"].detach().cpu().numpy(),
                 )
             )
+
+        print(to_log)
         
         self.log_dict(
             to_log,
-            on_step=False,
+            on_step=True,
             on_epoch=True,
             logger=True,
             prog_bar=True,
