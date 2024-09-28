@@ -133,9 +133,6 @@ class SpineDataset(Dataset):
         train_row = self.train.iloc[idx, :]
         study_id = train_row["study_id"]
         series_desc = self.descriptions_compact.loc[study_id]
-        # series_dict = {
-        #     s_id:s_description for s_id,s_description in series
-        # }
         
         study=read_study(root=self.dicom_dir, 
                          study_id=train_row["study_id"],
@@ -158,9 +155,6 @@ class SpineDataset(Dataset):
         study_coords["x"] = study_coords["x"]*study_coords["scale"]
         study_coords["y"] = study_coords["y"]*study_coords["scale"]
 
-        if len(study_coords) == 0:
-            pass
-
         def _world_coords(x):
             row_series = study.get_series(x["series_id"])
             row_instance = row_series.get_instance(x["instance_number"])
@@ -179,13 +173,13 @@ class SpineDataset(Dataset):
                 #     return coords_2d, instance_meta.instance_number, min_z, i
                 
             return coords_2d, min_z_instance_number, min_z, i
-                
-        study_coords["world"] = study_coords.apply(_world_coords, axis=1)
-        axial_t2_backproject = study_coords["world"].apply(lambda x: _backproject_to_image_coords(x, study.get_axial_t2()))
-        study_coords["axial_t2"] = axial_t2_backproject
-        study_coords["saggital_t2_stir"] = study_coords["world"].apply(lambda x: _backproject_to_image_coords(x, study.get_saggital_t2_stir()))
-
-        study_coords["condition_spec_idx"] = study_coords["condition_spec"].map(condition_spec_to_idx)
+        
+        if len(study_coords) > 0:
+            study_coords["world"] = study_coords.apply(_world_coords, axis=1)
+            axial_t2_backproject = study_coords["world"].apply(lambda x: _backproject_to_image_coords(x, study.get_axial_t2()))
+            study_coords["axial_t2"] = axial_t2_backproject
+            study_coords["saggital_t2_stir"] = study_coords["world"].apply(lambda x: _backproject_to_image_coords(x, study.get_saggital_t2_stir()))
+            study_coords["condition_spec_idx"] = study_coords["condition_spec"].map(condition_spec_to_idx)
 
         saggital_t2_coords_xy = np.zeros((25, 2), dtype=np.float32)
         saggital_t2_coords_z = np.zeros(25, dtype=np.float32)
@@ -361,14 +355,15 @@ if __name__ == "__main__":
         callbacks=[checkpoint_cb, lr_monitor, progress_bar],
         profiler="simple",
         num_sanity_val_steps=Config.num_sanity_val_steps,
-        fast_dev_run=Config.debug,
+        fast_dev_run=Config.debug
     )
 
     # trainer.fit(model, spine_data_module.train_dataloader(), spine_data_module.val_dataloader() if Config.validate else None)
 
     # from spine.model.enc2d3d import Enc2d3d
     # net = Enc2d3d(pretrained=True)
-    # for x in spine_data_module.train_dataloader():
+    for x in spine_data_module.train_dataloader():
+        pass
     #     net.forward(x, output_types=("loss"))
 
     from spine.model.model import RSNASpineLightningModule
