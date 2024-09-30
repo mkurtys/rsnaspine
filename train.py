@@ -9,12 +9,15 @@ import os
 
 import pandas as pd
 import torch.utils
+import albumentations as A
 from torch.utils.data import Dataset, DataLoader
 from spine.read import read_study
 from spine.task.split import train_val_split
 from spine.transforms import image_to_patient_coords_3d, patient_coords_to_image_2d
 from spine.utils.heatmap import heatmap_2d_encoder, heatmap_3d_encoder
 from spine.model.model import RSNASpineLightningModule
+from spine.task.dataset import SpineDataset, custom_collate_fn
+from spine.task.constants import condition_severity_map, condition_spec_to_idx
 
 import pytorch_lightning as pl
 from pytorch_lightning.loggers.tensorboard import TensorBoardLogger
@@ -47,19 +50,20 @@ class WandbConfig:
 class Config:
     use_wandb = False
     root_data_dir = str(dataset_path)
-    batch_size = 6
-    num_workers = 1
+    batch_size = 8
+    num_workers = 5
     num_sanity_val_steps=0
     num_sanity_train_steps=0 
     # model_checkpoint_source = ModelCheckpointSource.NO_CHECKPOINT
     # model_checkpoint_uri = "checkpoints/last-v9.ckpt"
     # True, to use Config params instead of checkpoints
     # overwrite_checkpoint_hparams=True
-    epochs_count = 3
+    epochs_count = 10
     # splits_count = 1
     warmup_lr = 1e-5
     warmup_epochs = 1
-    lr=1e-3
+    aug_prob = 0.5
+    lr=5e-4
     t_max= 3
     min_lr= 1e-4
     weight_decay=5e-3
@@ -76,172 +80,41 @@ np.random.seed(0)
 torch.manual_seed(0)
 # pl.seed_everything(0)
 
-
-condition_severity_map = {
-    "Normal/Mild": 0,
-    "Moderate": 1,
-    "Severe": 2
-}
-
-level_code_map = {
-    "l1_l2": 0,
-    "l2_l3": 1,
-    "l3_l4": 2,
-    "l4_l5": 3,
-    "l5_s1": 4
-}
-
-conditions_spec_ordered = ['spinal_canal_stenosis_l1_l2', 'spinal_canal_stenosis_l2_l3', 'spinal_canal_stenosis_l3_l4', 'spinal_canal_stenosis_l4_l5', 'spinal_canal_stenosis_l5_s1', 'left_neural_foraminal_narrowing_l1_l2', 'left_neural_foraminal_narrowing_l2_l3', 'left_neural_foraminal_narrowing_l3_l4', 'left_neural_foraminal_narrowing_l4_l5', 'left_neural_foraminal_narrowing_l5_s1', 'right_neural_foraminal_narrowing_l1_l2', 'right_neural_foraminal_narrowing_l2_l3', 'right_neural_foraminal_narrowing_l3_l4', 'right_neural_foraminal_narrowing_l4_l5', 'right_neural_foraminal_narrowing_l5_s1', 'left_subarticular_stenosis_l1_l2', 'left_subarticular_stenosis_l2_l3', 'left_subarticular_stenosis_l3_l4', 'left_subarticular_stenosis_l4_l5', 'left_subarticular_stenosis_l5_s1', 'right_subarticular_stenosis_l1_l2', 'right_subarticular_stenosis_l2_l3', 'right_subarticular_stenosis_l3_l4', 'right_subarticular_stenosis_l4_l5', 'right_subarticular_stenosis_l5_s1']
-condition_spec_to_idx = {c: i for i, c in enumerate(conditions_spec_ordered)}
-condition_spec_from_idx = {i: c for i, c in enumerate(conditions_spec_ordered)}
-
-
 conditions_unsided = {
     'neural_foraminal_narrowing',
     'subarticular_stenosis'
     'spinal_canal_stenosis'
 }
 
+transforms_train = A.Compose([
+    A.RandomBrightnessContrast(brightness_limit=(-0.2, 0.2), contrast_limit=(-0.2, 0.2), p=Config.aug_prob),
+    A.OneOf([
+        A.MotionBlur(blur_limit=5),
+        A.MedianBlur(blur_limit=5),
+        A.GaussianBlur(blur_limit=5),
+        A.GaussNoise(var_limit=(5.0, 30.0)),
+    ], p=Config.aug_prob),
 
-class SpineDataset(Dataset):
-    def __init__(self, 
-                 dicom_dir,
-                 train:pd.DataFrame,
-                 coordinates: pd.DataFrame,
-                 descriptions: pd.DataFrame,
-                 resize=(256,256),
-                 transform=None,
-                 target_transform=None,
-                 prepare_heatmaps=False):
-        
-        self.dicom_dir = dicom_dir
-        self.train=train
-        self.coordinates=coordinates
-        self.descriptions=descriptions
-        self.descriptions_compact = descriptions.sort_values(["study_id", "series_description"]).groupby("study_id").apply(lambda x: [(sid,d) for sid,d in zip(x["series_id"],x["series_description"]) ] )
+    # A.OneOf([
+    #    A.OpticalDistortion(distort_limit=1.0),
+    #    A.GridDistortion(num_steps=5, distort_limit=1.),
+    #    A.ElasticTransform(alpha=3),
+    #], p=Config.aug_prob),
 
-        self.transform = transform
-        self.target_transform = target_transform
-        self.resize = resize
-        self.prepare_heatmaps = prepare_heatmaps
+    # A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=15, border_mode=0, p=Config.aug_prob),
+    #A.Resize(IMG_SIZE[0], IMG_SIZE[1]),
+    #A.CoarseDropout(max_holes=16, max_height=64, max_width=64, min_holes=1, min_height=8, min_width=8, p=AUG_PROB),    
+    #A.Normalize(mean=0.5, std=0.5)
+])
 
-    def __len__(self):
-        return len(self.train.index)
-
-    def __getitem__(self, idx):
-        # Axial T2, Sagittal T1, Sagittal T2/STIR 
-        train_row = self.train.iloc[idx, :]
-        study_id = train_row["study_id"]
-        series_desc = self.descriptions_compact.loc[study_id]
-        
-        study=read_study(root=self.dicom_dir, 
-                         study_id=train_row["study_id"],
-                         series_ids=[s_id for s_id,_ in series_desc],
-                         series_descriptions=[s_description for _,s_description in series_desc],
-                         resize=self.resize
-                        )
-        
-        study_severity = train_row.values[1:-1].copy().astype(int)
-        # 5 levels, 5 points, 3 grades = 75
-        study_severity = study_severity
-        # study_severity_array = np.zeros((25,3), dtype=int)
-        # study_severity_mask = study_severity!=-1
-        # study_severity_array[study_severity_mask, study_severity] = 1
-        #study_severity_array[~study_severity_mask, :] = -1
-
-        series_scales = study.get_series_scales()
-        study_coords = self.coordinates.query(f"study_id == {study_id}")
-        study_coords = pd.merge(on="series_id", left=study_coords, right=series_scales, how="left")
-        study_coords["x"] = study_coords["x"]*study_coords["scale"]
-        study_coords["y"] = study_coords["y"]*study_coords["scale"]
-
-        def _world_coords(x):
-            row_series = study.get_series(x["series_id"])
-            row_instance = row_series.get_instance(x["instance_number"])
-            return image_to_patient_coords_3d(x["x"], x["y"], row_instance.position, row_instance.orientation, row_instance.pixel_spacing)
-        
-        def _backproject_to_image_coords(world_coords, series):
-            min_z = 100
-            min_z_instance_number =  None
-            for i, instance_meta in enumerate(series.meta):
-                coords_2d, is_inside = patient_coords_to_image_2d(world_coords, instance_meta,
-                               return_if_contains=True)
-                if min_z > abs(coords_2d[2]):
-                    min_z = abs(coords_2d[2])
-                    min_z_instance_number = instance_meta.instance_number
-                # if is_inside:
-                #     return coords_2d, instance_meta.instance_number, min_z, i
-                
-            return coords_2d, min_z_instance_number, min_z, i
-        
-        
-        if len(study_coords) > 0:
-            study_coords["world"] = study_coords.apply(_world_coords, axis=1)
-            axial_t2_backproject = study_coords["world"].apply(lambda x: _backproject_to_image_coords(x, study.get_axial_t2()))
-            study_coords["axial_t2"] = axial_t2_backproject
-            study_coords["saggital_t2_stir"] = study_coords["world"].apply(lambda x: _backproject_to_image_coords(x, study.get_saggital_t2_stir()))
-            study_coords["condition_spec_idx"] = study_coords["condition_spec"].map(condition_spec_to_idx)
-
-        saggital_t2_coords_xy = np.zeros((25, 2), dtype=np.float32)
-        saggital_t2_coords_z = np.zeros(25, dtype=np.float32)
-        saggital_t2_coords_mask = np.zeros(25, dtype=int)
-        
-        world_coords = np.zeros((25, 3), dtype=np.float32)
-        world_coords_mask = np.zeros(25, dtype=int)
-        for i, row in study_coords.iterrows():
-            saggital_t2_coords_xy[row["condition_spec_idx"]] = row["saggital_t2_stir"][0][:2]
-            saggital_t2_coords_z[row["condition_spec_idx"]] = row["saggital_t2_stir"][-1]
-            saggital_t2_coords_mask[row["condition_spec_idx"]] = 1
-            world_coords_mask[row["condition_spec_idx"]] = 1
-            world_coords[row["condition_spec_idx"]] = row["world"][::-1] #x,y,z -> z,y,x
-        saggital_t2_coords_zyx = np.concatenate([saggital_t2_coords_xy, saggital_t2_coords_z.reshape(-1,1)], axis=1)[:,::-1]
-
-        # print(world_coords)
-        heatmap = heatmap_3d_encoder(study.get_saggital_t2_stir(),
-                           stride=(4,4),
-                           gt_coords=world_coords,
-                           coords_mask=world_coords_mask,
-                           gt_classes=study_severity,
-                           num_classes=3,
-                           sigma=2)   
-        heatmap= torch.from_numpy(heatmap).float()
-        heatmap = torch.permute(heatmap, (1,0,2,3))
-        # print("heatmap shape", heatmap.shape)
-        
-
-        saggital_t2_slices_count =  study.get_saggital_t2_stir().volume.shape[0]
-        middle_slice = saggital_t2_slices_count//2 + 1
-
-        saggital_t2_volume = study.get_saggital_t2_stir().volume
-        depth, height, width = study.get_saggital_t2_stir().volume.shape
-
-
-        if self.transform:
-            image = self.transform(image)
-        if self.target_transform:
-            label = self.target_transform(label)
-        d = {    "study_id": int(study_id),
-                 "D": depth,
-                 "image": saggital_t2_volume,
-                  # "axial_t2": study.get_axial_t2().volume,
-                 "saggital_t2_stir_coords_xy": saggital_t2_coords_xy,
-                 "saggital_t2_stir_coords_z": saggital_t2_coords_z,
-                 "saggital_t2_stir_coords_mask": saggital_t2_coords_mask,
-                 "grade":  study_severity,
-                 "heatmap": heatmap
-        }
-        return d
-    
+#transforms_val = A.Compose([
+    #A.Resize(IMG_SIZE[0], IMG_SIZE[1]),
+    #A.Normalize(mean=0.5, std=0.5)
+# ])
 
 
 # batchify dict with default funcitons
-def custom_collate_fn(batch):
-    def _concat_imgs_leave_other(x, key):
-        if "image" in key or "heatmap" in key:
-            return torch.tensor(np.concatenate(x))
-        else:
-            return torch.utils.data._utils.collate.default_collate(x)
-    return {key: _concat_imgs_leave_other([d[key] for d in batch], key) for key in batch[0].keys()}
+
 
 class SpineDataModule(pl.LightningDataModule):
     def __init__(self, train_dataset, validation_dataset, batch_size, num_workers):
@@ -282,8 +155,8 @@ if __name__ == "__main__":
 
     has_t2_stir = descriptions.sort_values(["study_id", "series_description"]).groupby("study_id")["series_description"].apply(lambda x: (x=="Sagittal T2/STIR").any())
     valid_studies = has_t2_stir[has_t2_stir].index
+    descriptions = descriptions[descriptions["study_id"].isin(valid_studies)]
     train = train[train["study_id"].isin(valid_studies)]
-
 
     train_melt = train.melt(id_vars="study_id", var_name="condition_spec", value_name="severity").sort_values(["study_id", "condition_spec"])
     train_melt["severity_code"] = train_melt["severity"].map(condition_severity_map)
@@ -315,7 +188,8 @@ if __name__ == "__main__":
                                     train=train.query("fold !=  0"),
                                     coordinates=coordinates,
                                     descriptions=descriptions,
-                                    resize=(224,224)
+                                    resize=(224,224),
+                                    transform=transforms_train
                                     )
 
     val_spine_dataset = SpineDataset(dicom_dir=dataset_path/"train_images/",

@@ -28,6 +28,15 @@ class RSNASpineLightningModule(pl.LightningModule):
         # self.loss_module = AbdTraumaLoss()
         self.model = Enc2d3d(pretrained=True)
         self.validation_step_outputs = []
+        multiclass_metrics = MetricCollection([
+            MulticlassAccuracy(3), MulticlassPrecision(3), MulticlassRecall(3)
+        ])
+        binary_metrics = MetricCollection([
+            BinaryAccuracy(), BinaryPrecision(), BinaryRecall()
+        ])
+
+        # self.train_metrics_anyinjury = binary_metrics.clone(prefix='train/injury_')
+        self.val_metrics_all = multiclass_metrics.clone(prefix='val/')
     
     def configure_optimizers(self):
         optimizer = optim.SGD(self.model.parameters(), lr=self.hparams.lr)
@@ -65,8 +74,9 @@ class RSNASpineLightningModule(pl.LightningModule):
                     output["grade"].detach().cpu().numpy(),
                 )
             )
+            self.val_metrics_all(output["grade"], batch["grade"])
 
-        print(to_log)
+        # print(to_log)
         
         self.log_dict(
             to_log,
@@ -85,5 +95,5 @@ class RSNASpineLightningModule(pl.LightningModule):
         # loss = losses.mean()        
         self.validation_step_outputs.clear()
 
-    def predict(self, batch):
+    def predict_step(self, batch, batch_idx):
         return self.model(batch, ('infer',))["grade"].detach().cpu()
