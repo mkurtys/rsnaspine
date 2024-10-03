@@ -16,8 +16,14 @@ def F_grade_loss(grade, truth):
     return loss
 
  
-def F_zxy_loss(coords, gt, mask):
-    loss = F.mse_loss(coords[mask], gt[mask])
+def F_zxy_loss(coords, gt, mask, heatmap):
+    # heatmap_size = torch.stack([torch.tensor(h.shape[-3:]).float().to(coords.device) for h in heatmap])
+    # heatmap_size = heatmap_size.unsqueeze(1)
+    # print("heatmap_size ",heatmap_size.shape)
+    # print("coords ",coords.shape)
+    
+    # loss = F.mse_loss((coords/heatmap_size)[mask], (gt/heatmap_size)[mask])
+    loss = F.mse_loss(coords[mask], gt[mask])/5
     return loss
 
 
@@ -69,7 +75,7 @@ def F_focal_heatmap_loss(heatmap, gt, D):
 
 #F_JS_divergence_loss
 def F_JS_heatmap_loss(heatmap, truth, D):
-    heatmap =  torch.split_with_sizes(heatmap, D, 0)  
+    # heatmap =  torch.split_with_sizes(heatmap, D, 0)  
     truth =  torch.split_with_sizes(truth, D, 0)
     num_image = len(heatmap)
 

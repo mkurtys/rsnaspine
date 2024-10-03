@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 import timm
 from spine.model.blocks import MyUnetDecoder3d, pvtv2_encode
-from spine.model.loss import F_zxy_loss, F_grade_loss, F_focal_heatmap_loss
+from spine.model.loss import F_zxy_loss, F_grade_loss, F_focal_heatmap_loss, F_JS_heatmap_loss
 from spine.model.heatmap import heatmap_to_coord, heatmap_to_grade
 
 
@@ -84,8 +84,9 @@ class Enc2d3d(nn.Module):
 
         output = {}
         if 'loss' in output_types:
-            output['heatmap_loss'] = F_focal_heatmap_loss(heatmap, batch['heatmap'], D)
-            output['zxy_loss'] = F_zxy_loss(coords, batch['coords'], batch['coords_mask'])
+            # output['heatmap_loss'] = F_focal_heatmap_loss(heatmap, batch['heatmap'], D)
+            output['heatmap_loss'] = F_JS_heatmap_loss(heatmap, batch['heatmap'], D)
+            output['zxy_loss'] = F_zxy_loss(coords, batch['coords'], batch['coords_mask'], heatmap)
             #output['grade_loss'] = F_grade_loss(grade,  batch['grade'].to(device))
 
             if False: #turn on dynamic matching in later stage of training
