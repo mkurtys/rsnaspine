@@ -70,6 +70,7 @@ class RSNASpineLightningModule(pl.LightningModule):
             on_epoch=True,
             logger=True,
             prog_bar=True,
+            batch_size=len(batch["D"])
         )
         
         return loss

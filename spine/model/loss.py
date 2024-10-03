@@ -76,7 +76,8 @@ def F_focal_heatmap_loss(heatmap, gt, D):
 #F_JS_divergence_loss
 def F_JS_heatmap_loss(heatmap, truth, D):
     # heatmap =  torch.split_with_sizes(heatmap, D, 0)  
-    truth =  torch.split_with_sizes(truth, D, 0)
+    # truth =  torch.split_with_sizes(truth, D, 0)
+    truth = torch.split(truth, D.tolist(), 0)
     num_image = len(heatmap)
 
     loss = 0.0
