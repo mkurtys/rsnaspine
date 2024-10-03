@@ -52,10 +52,12 @@ def generate_world_mesh_coords(series: SpineSeries, stride):
     return coords
 
 # TODO it is not resilent for coords outside the volume
+# TODO it so so slow (use code from cornernet)
 def heatmap_3d_encoder(series: SpineSeries, stride, gt_coords, coords_mask, gt_classes, num_classes, sigma):
     mesh = generate_world_mesh_coords(series, stride)
     num_points = 25
     heatmap =  np.zeros((num_points*num_classes, *mesh.shape[:-1]))
+    heatmap_gt_coords = np.zeros((num_points, 3))
     if gt_coords is None:
         return heatmap  
     gt_coords = gt_coords.reshape(-1,1,1,1,3)
@@ -68,10 +70,11 @@ def heatmap_3d_encoder(series: SpineSeries, stride, gt_coords, coords_mask, gt_c
         distance = np.square((gt_coord - mesh)).sum(axis=-1)
         class_heatmap = _gaussian(distance, sigma).reshape(mesh.shape[:-1])
         heatmap_max = class_heatmap.max()
+        heatmap_gt_coords[i] = np.unravel_index(class_heatmap.argmax(), class_heatmap.shape)
         if heatmap_max > 0:
             class_heatmap /= heatmap_max
         heatmap[3*i+class_idx] = class_heatmap
-    return heatmap
+    return heatmap, heatmap_gt_coords
 
 
 def heatmap_3d_simple_encoder(heatmap_size, gt_coords, gt_classes, num_classes, sigma, stride):

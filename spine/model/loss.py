@@ -16,12 +16,8 @@ def F_grade_loss(grade, truth):
     return loss
 
  
-def F_zxy_loss(z, xy,  z_truth, xy_truth):
-    m = z_truth!=-1
-    z_truth = z_truth.float()
-    loss = (
-        F.mse_loss(z[m], z_truth[m]) + F.mse_loss(xy[m], xy_truth[m])
-    )
+def F_zxy_loss(coords, gt, mask):
+    loss = F.mse_loss(coords[mask], gt[mask])
     return loss
 
 
@@ -36,6 +32,7 @@ def F_focal_heatmap_loss(heatmap, gt, D):
     num_image = len(heatmap)
 
     for i in range(num_image):
+        # (D, num_point*num_grade, H, W) -> (num_point*num_grade, D, H, W)
         gt_i = gt[i].permute(1,0,2,3)
         pos_inds = gt_i.eq(1)
         neg_inds = gt_i.lt(1)
@@ -61,6 +58,8 @@ def F_focal_heatmap_loss(heatmap, gt, D):
         pos_loss = pos_loss.sum()
         neg_loss = neg_loss.sum()
 
+        # print(f"pos_loss {pos_loss} neg_loss {neg_loss} num_pos {num_pos}")
+
         if pos_pred.nelement() == 0:
             loss = loss - neg_loss
         else:
@@ -83,7 +82,7 @@ def F_JS_heatmap_loss(heatmap, truth, D):
         p = torch.clamp(p.transpose(1,0).flatten(1),eps,1-eps)
         q = torch.clamp(q.transpose(1,0).flatten(1),eps,1-eps)
         m = (0.5 * (p + q)).log()
-
+        #  Tensor of arbitrary shape in log-probabilities
         kl = lambda x,t: F.kl_div(x,t, reduction='batchmean', log_target=True)
         loss += 0.5 * (kl(m, p.log()) + kl(m, q.log()))
     loss = loss/num_image

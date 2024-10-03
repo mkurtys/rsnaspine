@@ -3,8 +3,9 @@ from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torchmetrics import MetricCollection
-from torchmetrics.classification import MulticlassAccuracy, MulticlassPrecision, MulticlassRecall, BinaryAccuracy, BinaryPrecision, BinaryRecall, BinaryStatScores
+#from torchmetrics import MetricCollection
+# from torchmetrics.classification import MulticlassAccuracy, MulticlassPrecision, MulticlassRecall, BinaryAccuracy, BinaryPrecision, BinaryRecall, BinaryStatScores
+from torcheval.metrics import MulticlassAccuracy
 import pytorch_lightning as pl
 import torch
 from transformers import get_cosine_schedule_with_warmup
@@ -14,34 +15,21 @@ from .enc2d3d import Enc2d3d
 
 
 class RSNASpineLightningModule(pl.LightningModule):
-    def __init__(self, lr: float, max_steps: int):
+    def __init__(self, lr: float, num_training_steps: int, num_cycles: float):
         super().__init__()
         # save_hyperparameters() is used to specify which init arguments should 
         # be saved in the checkpoint file to be used to instantiate the model
         # from the checkpoint later.
         self.save_hyperparameters()
-
-
-        # self.base_model = base_model
-        # self.neck = neck
-        # self.classification_head  = AbdTraumaClassificationHead(out_features)
-        # self.loss_module = AbdTraumaLoss()
         self.model = Enc2d3d(pretrained=True)
         self.validation_step_outputs = []
-        multiclass_metrics = MetricCollection([
-            MulticlassAccuracy(3), MulticlassPrecision(3), MulticlassRecall(3)
-        ])
-        binary_metrics = MetricCollection([
-            BinaryAccuracy(), BinaryPrecision(), BinaryRecall()
-        ])
-
-        # self.train_metrics_anyinjury = binary_metrics.clone(prefix='train/injury_')
-        self.val_metrics_all = multiclass_metrics.clone(prefix='val/')
+        self.valid_accuracy= MulticlassAccuracy(num_classes=3)
     
     def configure_optimizers(self):
-        optimizer = optim.SGD(self.model.parameters(), lr=self.hparams.lr)
+        optimizer = optim.AdamW(self.model.parameters(), lr=self.hparams.lr)
         scheduler = get_cosine_schedule_with_warmup(
-            optimizer, num_training_steps=self.hparams.max_steps, num_warmup_steps=0
+            optimizer, num_training_steps=self.hparams.num_training_steps,
+            num_cycles=self.hparams.num_cycles, num_warmup_steps=0
         )
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
@@ -56,7 +44,7 @@ class RSNASpineLightningModule(pl.LightningModule):
         
     def __share_step(self, batch, mode: str):
         if mode == 'train':
-            output_type = ('loss',)
+            output_type = ('loss' )
         else:
             output_type = ('infer', 'loss')
 
@@ -66,6 +54,7 @@ class RSNASpineLightningModule(pl.LightningModule):
             f'{mode}/loss': output["loss"].detach().item(),
             f'{mode}/heatmap_loss': output["heatmap_loss"].detach().item(),
             f'{mode}/grade_loss': output["grade_loss"].detach().item(),
+            f'{mode}/zxy_loss': output["zxy_loss"].detach().item(),
             }
         
         if mode == 'val':
@@ -74,9 +63,6 @@ class RSNASpineLightningModule(pl.LightningModule):
                     output["grade"].detach().cpu().numpy(),
                 )
             )
-            self.val_metrics_all(output["grade"], batch["grade"])
-
-        # print(to_log)
         
         self.log_dict(
             to_log,
@@ -90,10 +76,9 @@ class RSNASpineLightningModule(pl.LightningModule):
         
     def on_validation_epoch_end(self):
         grades = np.concatenate([x[0] for x in self.validation_step_outputs])
-        # preds = np.concatenate([x[1] for x in self.validation_step_outputs])
-        # losses = np.array([x[2] for x in self.validation_step_outputs])
-        # loss = losses.mean()        
         self.validation_step_outputs.clear()
+        self.log("val/accuracy", self.valid_accuracy.compute().cpu().item())
+        self.valid_accuracy.reset()
 
     def predict_step(self, batch, batch_idx):
         return self.model(batch, ('infer',))["grade"].detach().cpu()

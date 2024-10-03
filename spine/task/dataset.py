@@ -63,7 +63,7 @@ class SpineDataset(Dataset):
                     "image": saggital_t2_volume
                    }
         
-        study_severity = train_row.values[1:-1].copy().astype(int)
+        study_severity = train_row.values[1:].copy().astype(int)
         # 5 levels, 5 points, 3 grades = 75
         study_severity = study_severity
 
@@ -78,66 +78,31 @@ class SpineDataset(Dataset):
             row_instance = row_series.get_instance(x["instance_number"])
             return image_to_patient_coords_3d(x["x"], x["y"], row_instance.position, row_instance.orientation, row_instance.pixel_spacing)
         
-        def _backproject_to_image_coords(world_coords, series):
-            min_z = 100
-            min_z_instance_number =  None
-            for i, instance_meta in enumerate(series.meta):
-                coords_2d, is_inside = patient_coords_to_image_2d(world_coords, instance_meta,
-                               return_if_contains=True)
-                if min_z > abs(coords_2d[2]):
-                    min_z = abs(coords_2d[2])
-                    min_z_instance_number = instance_meta.instance_number
-                # if is_inside:
-                #     return coords_2d, instance_meta.instance_number, min_z, i
-                
-            return coords_2d, min_z_instance_number, min_z, i
-        
-        
         if len(study_coords) > 0:
             study_coords["world"] = study_coords.apply(_world_coords, axis=1)
-            axial_t2_backproject = study_coords["world"].apply(lambda x: _backproject_to_image_coords(x, study.get_axial_t2()))
-            study_coords["axial_t2"] = axial_t2_backproject
-            study_coords["saggital_t2_stir"] = study_coords["world"].apply(lambda x: _backproject_to_image_coords(x, study.get_saggital_t2_stir()))
             study_coords["condition_spec_idx"] = study_coords["condition_spec"].map(condition_spec_to_idx)
 
-        saggital_t2_coords_xy = np.zeros((25, 2), dtype=np.float32)
-        saggital_t2_coords_z = np.zeros(25, dtype=np.float32)
-        saggital_t2_coords_mask = np.zeros(25, dtype=int)
-        
         world_coords = np.zeros((25, 3), dtype=np.float32)
         world_coords_mask = np.zeros(25, dtype=int)
         for i, row in study_coords.iterrows():
-            saggital_t2_coords_xy[row["condition_spec_idx"]] = row["saggital_t2_stir"][0][:2]
-            saggital_t2_coords_z[row["condition_spec_idx"]] = row["saggital_t2_stir"][-1]
-            saggital_t2_coords_mask[row["condition_spec_idx"]] = 1
             world_coords_mask[row["condition_spec_idx"]] = 1
             world_coords[row["condition_spec_idx"]] = row["world"][::-1] #x,y,z -> z,y,x
-        saggital_t2_coords_zyx = np.concatenate([saggital_t2_coords_xy, saggital_t2_coords_z.reshape(-1,1)], axis=1)[:,::-1]
-
-        # print(world_coords)
-        heatmap = heatmap_3d_encoder(study.get_saggital_t2_stir(),
-                           stride=(4,4),
-                           gt_coords=world_coords,
-                           coords_mask=world_coords_mask,
-                           gt_classes=study_severity,
-                           num_classes=3,
-                           sigma=2)   
-        heatmap= torch.from_numpy(heatmap).float()
-        heatmap = torch.permute(heatmap, (1,0,2,3))
-        # print("heatmap shape", heatmap.shape)
         
-        saggital_t2_slices_count =  study.get_saggital_t2_stir().volume.shape[0]
-        middle_slice = saggital_t2_slices_count//2 + 1
-
-        if self.transform:
-            saggital_t2_volume = self.transform(image=saggital_t2_volume.astype(np.float32))["image"]
+        # print(world_coords)
+        heatmap, heatmap_coords = heatmap_3d_encoder(study.get_saggital_t2_stir(),
+                                                     stride=(4,4),
+                                                     gt_coords=world_coords,
+                                                     coords_mask=world_coords_mask,
+                                                     gt_classes=study_severity,
+                                                     num_classes=3,
+                                                     sigma=4)
+        heatmap= torch.from_numpy(heatmap).float()
+        heatmap = torch.permute(heatmap, (1,0,2,3))     
         d = {    "study_id": int(study_id),
                  "D": depth,
                  "image": saggital_t2_volume,
-                  # "axial_t2": study.get_axial_t2().volume,
-                 "saggital_t2_stir_coords_xy": saggital_t2_coords_xy,
-                 "saggital_t2_stir_coords_z": saggital_t2_coords_z,
-                 "saggital_t2_stir_coords_mask": saggital_t2_coords_mask,
+                 "coords": heatmap_coords.astype(np.float32),
+                 "coords_mask": world_coords_mask,
                  "grade":  study_severity,
                  "heatmap": heatmap
         }

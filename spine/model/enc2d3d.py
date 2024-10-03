@@ -16,16 +16,18 @@ class Enc2d3d(nn.Module):
         self.register_buffer('mean', torch.tensor(0.5))
         self.register_buffer('std', torch.tensor(0.5))
 
-        arch = 'pvt_v2_b1'
+        arch = 'pvt_v2_b0'
 
         encoder_dim = {
+            'pvt_v2_b0': [32, 64, 160, 256],
             'pvt_v2_b1': [64, 128, 320, 512],
             'pvt_v2_b2': [64, 128, 320, 512],
             'pvt_v2_b4': [64, 128, 320, 512],
         }.get(arch, [768])
 
         decoder_dim = \
-              [256, 128, 128]
+              [ 256, 128, 64]
+              # [256, 128, 128]
               #[256, 128, 64]
 
         self.encoder = timm.create_model(
@@ -44,7 +46,7 @@ class Enc2d3d(nn.Module):
 
     def forward(self, batch, output_types=('infer', 'loss')):
         device = self.D.device
-        image = batch['image'].to(device)
+        image = batch['image']
         D = batch['D']
         num_image = len(D)
 
@@ -62,7 +64,6 @@ class Enc2d3d(nn.Module):
         # for b in encode:
         #     for i, e in enumerate(b):
         #         print(f'encode {i} {e.shape}')
-
         heatmap   = []
         for i in range(num_image):
             e = [ encode[s][i].transpose(1,0).unsqueeze(0) for s in range(4) ]
@@ -73,30 +74,18 @@ class Enc2d3d(nn.Module):
             num_point, num_grade = 5*5,3
             all = self.heatmap(l).squeeze(0)
             _, d, h, w = all.shape
+
             all = all.reshape(num_point,num_grade,d,h,w)
             all = all.flatten(1).softmax(-1).reshape(num_point,num_grade, d, h, w)
             heatmap.append(all)
 
-        xy, z = heatmap_to_coord(heatmap)
+        coords = heatmap_to_coord(heatmap)
         grade = heatmap_to_grade(heatmap)
-        # print('heatmap[0]',heatmap[0].shape)
-        # print('xy',xy.shape)
-        # print('z',z.shape)
-        # print('grade',grade.shape)
-        # for h in heatmap:
-        #    print(h.shape)
-
-        # points, grades, d,h,w -> d, points, grades, h, w
-        # heatmap = torch.cat([all.permute(2,0,1,3,4) for all in heatmap])
-        # heatmap = torch.concatenate(heatmap)
-        # print("heatmap shape ",heatmap.shape)
-        #print('heatmap',heatmap.shape)
 
         output = {}
         if 'loss' in output_types:
-            output['heatmap_loss'] = F_focal_heatmap_loss(heatmap, batch['heatmap'].to(device), D)
-            output['zxy_loss'] = 0
-            #output['zxy_loss'] = F_zxy_loss(z, xy, batch['z'].to(device), batch['xy'].to(device))
+            output['heatmap_loss'] = F_focal_heatmap_loss(heatmap, batch['heatmap'], D)
+            output['zxy_loss'] = F_zxy_loss(coords, batch['coords'], batch['coords_mask'])
             #output['grade_loss'] = F_grade_loss(grade,  batch['grade'].to(device))
 
             if False: #turn on dynamic matching in later stage of training
@@ -110,12 +99,11 @@ class Enc2d3d(nn.Module):
             else:
                 output['grade_loss'] = F_grade_loss(grade,  batch['grade'].to(device))
 
-            output['loss'] = output['heatmap_loss'] + output['grade_loss'] # + output['zxy_loss']
+            output['loss'] = output['heatmap_loss'] + output['grade_loss'] + output['zxy_loss']
 
         if 'infer' in output_types:
             output['heatmap'] = heatmap
-            output['z'] = z
-            output['xy'] = xy
+            output['coords'] = coords
             output['grade'] = grade
 
         return output

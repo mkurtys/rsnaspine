@@ -16,6 +16,7 @@ from spine.task.split import train_val_split
 from spine.transforms import image_to_patient_coords_3d, patient_coords_to_image_2d
 from spine.utils.heatmap import heatmap_2d_encoder, heatmap_3d_encoder
 from spine.model.model import RSNASpineLightningModule
+from spine.task.tables import read_train_tables
 from spine.task.dataset import SpineDataset, custom_collate_fn
 from spine.task.constants import condition_severity_map, condition_spec_to_idx
 
@@ -48,7 +49,7 @@ class WandbConfig:
     watch_log_freq = 100
 
 class Config:
-    use_wandb = False
+    use_wandb = True and os.environ.get("DISABLE_WANDB") is None
     root_data_dir = str(dataset_path)
     batch_size = 8
     num_workers = 5
@@ -58,13 +59,13 @@ class Config:
     # model_checkpoint_uri = "checkpoints/last-v9.ckpt"
     # True, to use Config params instead of checkpoints
     # overwrite_checkpoint_hparams=True
-    epochs_count = 10
+    epochs_count = 70
     # splits_count = 1
     warmup_lr = 1e-5
     warmup_epochs = 1
     aug_prob = 0.5
     lr=5e-4
-    t_max= 3
+    t_max= 30
     min_lr= 1e-4
     weight_decay=5e-3
     # mixed-precision
@@ -148,35 +149,7 @@ class SpineDataModule(pl.LightningDataModule):
 
 if __name__ == "__main__":
 
-    descriptions = pd.read_csv(dataset_path/"train_series_descriptions.csv")
-    coordinates = pd.read_csv(dataset_path/"train_label_coordinates.csv")
-    submissions = pd.read_csv(dataset_path/"sample_submission.csv")
-    train = pd.read_csv(dataset_path/"train.csv")
-
-    has_t2_stir = descriptions.sort_values(["study_id", "series_description"]).groupby("study_id")["series_description"].apply(lambda x: (x=="Sagittal T2/STIR").any())
-    valid_studies = has_t2_stir[has_t2_stir].index
-    descriptions = descriptions[descriptions["study_id"].isin(valid_studies)]
-    train = train[train["study_id"].isin(valid_studies)]
-
-    train_melt = train.melt(id_vars="study_id", var_name="condition_spec", value_name="severity").sort_values(["study_id", "condition_spec"])
-    train_melt["severity_code"] = train_melt["severity"].map(condition_severity_map)
-    train_melt["level"] = train_melt.apply(lambda x: "_".join(x["condition_spec"].rsplit("_", maxsplit=2)[1:]), axis=1)
-    train_melt["condition"] = train_melt.apply(lambda x: x["condition_spec"].replace("left_", "").replace("right_", "").rsplit("_", maxsplit=2)[0], axis=1)
-
-    for c in train.columns[1:]:
-        train[c] = train[c].map(condition_severity_map)
-    train.fillna(-1, inplace=True)
-    for c in train.columns[1:]:
-        train[c] = train[c].astype(int)
-
-    coordinates["instance_number"] = coordinates["instance_number"].astype(int)
-    coordinates["instance_number"] = coordinates["instance_number"]
-    coordinates["level"] = coordinates["level"].str.lower().str.replace("/", "_")
-    coordinates["condition_spec"] = coordinates.apply(lambda x: x["condition"].lower().replace(" ", "_") + "_" + x["level"], axis=1)
-    coordinates["condition"] = coordinates.apply(lambda x: x["condition_spec"].replace("left_", "").replace("right_", "").rsplit("_", maxsplit=2)[0], axis=1)
-
-    # coordinates = pd.merge(on=["study_id", "condition_level"], left=coordinates, right=train_melt, how="left")
-    coordinates = pd.merge(on=["study_id", "series_id"], left=coordinates, right=descriptions, how="left")
+    descriptions, coordinates, train_melt, train = read_train_tables(dataset_path)
 
     if Config.validate:
         fold_df = train_val_split(train_melt)
@@ -185,7 +158,7 @@ if __name__ == "__main__":
         train["fold"] = 1
 
     train_spine_dataset = SpineDataset(dicom_dir=dataset_path/"train_images/",
-                                    train=train.query("fold !=  0"),
+                                    train=train.query("fold !=  0").iloc[:, :-1],
                                     coordinates=coordinates,
                                     descriptions=descriptions,
                                     resize=(224,224),
@@ -193,7 +166,7 @@ if __name__ == "__main__":
                                     )
 
     val_spine_dataset = SpineDataset(dicom_dir=dataset_path/"train_images/",
-                                    train=train.query("fold ==  0"),
+                                    train=train.query("fold ==  0").iloc[:, :-1],
                                     coordinates=coordinates,
                                     descriptions=descriptions,
                                     resize=(224,224)
@@ -249,7 +222,7 @@ if __name__ == "__main__":
     #    pass
     #     net.forward(x, output_types=("loss"))
 
-    model = RSNASpineLightningModule(lr=Config.lr, max_steps=Config.t_max)
+    model = RSNASpineLightningModule(lr=Config.lr, num_training_steps=1000, num_cycles=0.5)
     trainer.fit(model, spine_data_module.train_dataloader(), spine_data_module.val_dataloader() if Config.validate else None)
 
         #print(x[0].shape)
