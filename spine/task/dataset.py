@@ -50,7 +50,8 @@ class SpineDataset(Dataset):
                          study_id=study_id,
                          series_ids=[s_id for s_id,_ in series_desc],
                          series_descriptions=[s_description for _,s_description in series_desc],
-                         resize=self.resize
+                         resize=self.resize,
+                         read_pixel_array_desc=["Sagittal T2/STIR"]
                         )
         
         saggital_t2_volume = study.get_saggital_t2_stir().volume
@@ -95,7 +96,8 @@ class SpineDataset(Dataset):
                                                      coords_mask=world_coords_mask,
                                                      gt_classes=study_severity,
                                                      num_classes=3,
-                                                     sigma=4)
+                                                     sigma=5,
+                                                     as_distribution=False)
         heatmap= torch.from_numpy(heatmap).float()
         heatmap = torch.permute(heatmap, (1,0,2,3))     
         d = {    "study_id": int(study_id),

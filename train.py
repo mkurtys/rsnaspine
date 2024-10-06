@@ -52,7 +52,7 @@ class Config:
     use_wandb = True and os.environ.get("DISABLE_WANDB") is None
     root_data_dir = str(dataset_path)
     batch_size = 8
-    num_workers = 5
+    num_workers = 12
     num_sanity_val_steps=0
     num_sanity_train_steps=0 
     # model_checkpoint_source = ModelCheckpointSource.NO_CHECKPOINT
@@ -88,13 +88,13 @@ conditions_unsided = {
 }
 
 transforms_train = A.Compose([
-    A.RandomBrightnessContrast(brightness_limit=(-0.2, 0.2), contrast_limit=(-0.2, 0.2), p=Config.aug_prob),
+    A.RandomBrightnessContrast(brightness_limit=(-0.1, 0.2), contrast_limit=(-0.2, 0.2), p=Config.aug_prob),
+    A.GaussNoise(var_limit=(0.01, 0.05), p=Config.aug_prob),
     A.OneOf([
         A.MotionBlur(blur_limit=5),
         A.MedianBlur(blur_limit=5),
         A.GaussianBlur(blur_limit=5),
-        A.GaussNoise(var_limit=(5.0, 30.0)),
-    ], p=Config.aug_prob),
+    ], p=Config.aug_prob/2),
 
     # A.OneOf([
     #    A.OpticalDistortion(distort_limit=1.0),

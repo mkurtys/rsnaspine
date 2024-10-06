@@ -62,6 +62,9 @@ class MyUnetDecoder3d(nn.Module):
         decode = []
         for i, block in enumerate(self.block):  
             s = skip[i]
+            # print(f'skip {i} {s.shape}')
+            # print(f'decode {i} {d.shape}')
+            # print(f'block {i} {block.conv1[0].in_channels} {block.conv1[0].out_channels}')
             d = block(d, s)
             decode.append(d)
         last = d

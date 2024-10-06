@@ -3,7 +3,7 @@ import torch
 def heatmap_to_coord(heatmap):
     num_image = len(heatmap)
     device = heatmap[0].device
-    num_point, num_grade, D, H, W = heatmap[0].shape
+    num_point, num_grade, _, H, W = heatmap[0].shape
     D = max([h.shape[2] for h in heatmap])
 
     # create coordinates grid.

@@ -53,7 +53,8 @@ def generate_world_mesh_coords(series: SpineSeries, stride):
 
 # TODO it is not resilent for coords outside the volume
 # TODO it so so slow (use code from cornernet)
-def heatmap_3d_encoder(series: SpineSeries, stride, gt_coords, coords_mask, gt_classes, num_classes, sigma):
+def heatmap_3d_encoder(series: SpineSeries, stride, gt_coords, coords_mask, gt_classes, num_classes, sigma,
+                       as_distribution=False):
     mesh = generate_world_mesh_coords(series, stride)
     num_points = 25
     heatmap =  np.zeros((num_points*num_classes, *mesh.shape[:-1]))
@@ -69,10 +70,18 @@ def heatmap_3d_encoder(series: SpineSeries, stride, gt_coords, coords_mask, gt_c
         class_heatmap = heatmap[3*i+class_idx]
         distance = np.square((gt_coord - mesh)).sum(axis=-1)
         class_heatmap = _gaussian(distance, sigma).reshape(mesh.shape[:-1])
-        heatmap_max = class_heatmap.max()
+        # not normalized, correct?
+        class_heatmap[class_heatmap < 0.05] = 0
+        if as_distribution:
+            heatmap_sum = class_heatmap.sum()
+            class_heatmap = class_heatmap / heatmap_sum if heatmap_sum > 0 else class_heatmap
+        else:
+            heatmap_max = class_heatmap.max()
+            if heatmap_max > 0:
+                class_heatmap /= heatmap_max
+
+        
         heatmap_gt_coords[i] = np.unravel_index(class_heatmap.argmax(), class_heatmap.shape)
-        if heatmap_max > 0:
-            class_heatmap /= heatmap_max
         heatmap[3*i+class_idx] = class_heatmap
     return heatmap, heatmap_gt_coords
 

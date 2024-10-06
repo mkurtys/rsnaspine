@@ -24,22 +24,27 @@ def read_series(
         study_id: str,
         series_id: str,
         series_description: str,
-        resize: Optional[Tuple[int, int]] = None
+        resize: Optional[Tuple[int, int]] = None,
+        read_pixels: bool = True
     ):
     dicom_files = glob.glob( f'{path}/*.dcm')
     if not dicom_files:
         raise ValueError(f'No dicom files found in {path}')
     dicom_files = sorted(dicom_files, key=lambda x: int(x.split('/')[-1].split('.')[0]))
     instance_numbers  = [int(f.split('/')[-1].split('.')[0]) for f in dicom_files]
-    dicom_instances = [ (instance_number,pydicom.dcmread(f)) for instance_number,f in zip(instance_numbers,dicom_files)]
 
+    dicom_instances = [ (instance_number,pydicom.dcmread(f, stop_before_pixels=(not read_pixels)))
+                        for instance_number,f in zip(instance_numbers,dicom_files)]
     # todo shall we sort by projection?
-    if  not all([d.pixel_array.shape==dicom_instances[0][1].pixel_array.shape for _,d in dicom_instances]):
-        # compute median shape
-        median_shape = np.median(np.array([d.pixel_array.shape for _,d in dicom_instances]), axis=0).astype(int)
-        pixel_arrays = [crop_or_pad(d.pixel_array, median_shape)  for _,d in dicom_instances]
+    if read_pixels:
+        if  not all([d.pixel_array.shape==dicom_instances[0][1].pixel_array.shape for _,d in dicom_instances]):
+            # compute median shape
+            median_shape = np.median(np.array([d.pixel_array.shape for _,d in dicom_instances]), axis=0).astype(int)
+            pixel_arrays = [crop_or_pad(d.pixel_array, median_shape)  for _,d in dicom_instances]
+        else:
+            pixel_arrays = [d.pixel_array for _,d in dicom_instances]
     else:
-        pixel_arrays = [d.pixel_array for _,d in dicom_instances]
+        pixel_arrays = None
 
 
     instance_meta = []
@@ -48,14 +53,14 @@ def read_series(
     series_scale = 1.0
     for j,(i,d) in enumerate(dicom_instances):
         # instance_id_map[i] = j
-        pa = pixel_arrays[j]
+        pa = pixel_arrays[j] if pixel_arrays else None
         position = np.array([float(v) for v in d.ImagePositionPatient])
         orientation = np.array([float(v) for v in d.ImageOrientationPatient])
         normal = np.cross(orientation[:3], orientation[3:])
         projection = np.sum(normal*position)
         pixel_spacing = np.array([float(v) for v in d.PixelSpacing])
 
-        if resize is not None:
+        if pa is not None and resize is not None:
             resized_pa, scale = resize_image_with_pad(pa, resize)
             series_scale=scale
             resized_pixel_arrays.append(resized_pa)
@@ -86,13 +91,13 @@ def read_series(
             instance_meta.append(
                 InstanceMeta(
                     instance_number=i,
-                    rows=pa.shape[0],
-                    cols=pa.shape[1],
+                    rows=pa.shape[0] if pa is not None else d.Rows,
+                    cols=pa.shape[1] if pa is not None else d.Columns,
                     position=position,
                     orientation=orientation,
                     normal=normal,
                     projection=projection,
-                    pixel_spacing=resized_spacing,
+                    pixel_spacing=pixel_spacing,
                     spacing_between_slices=float(d.SpacingBetweenSlices),
                     slice_thickness=float(d.SliceThickness),
                     # original_pixel_spacing=pixel_spacing,
@@ -101,10 +106,12 @@ def read_series(
                     scale=1.0    
                 ))
 
-
-    volume = np.stack(resized_pixel_arrays, axis=0)
-    volume = normalise_to_01(volume) #  normalise_to_8bit(volume)
-
+    if pixel_arrays:
+        volume = np.stack(resized_pixel_arrays, axis=0)
+        volume = normalise_to_01(volume) #  normalise_to_8bit(volume)
+    else:
+        volume = None
+    
     return SpineSeries(
         study_id=study_id,
         series_id=series_id,
@@ -117,8 +124,10 @@ def read_series(
 def read_study(root: str,
               study_id: str|int, series_ids: List[str|int],
               series_descriptions: List[str],
-              resize: Optional[Tuple[int, int]] = None) -> SpineStudy:
+              resize: Optional[Tuple[int, int]] = None,
+              read_pixel_array_desc: Optional[List[str]] = None) -> SpineStudy:
     series = [read_series(resolve_path(root, str(study_id), str(sid)),
-                          study_id, sid, description, resize) 
+                          study_id, sid, description, resize,
+                          read_pixels=(read_pixel_array_desc is None or description in read_pixel_array_desc)) 
                           for sid, description in zip(series_ids, series_descriptions)]
     return SpineStudy(study_id=study_id, series=series, series_descriptions=series_descriptions)

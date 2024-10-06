@@ -12,6 +12,7 @@ from transformers import get_cosine_schedule_with_warmup
 from typing import Optional
 import numpy as np
 from .enc2d3d import Enc2d3d
+from .enc2d3d_retina import Enc2d3dRetina
 
 
 class RSNASpineLightningModule(pl.LightningModule):
@@ -21,7 +22,7 @@ class RSNASpineLightningModule(pl.LightningModule):
         # be saved in the checkpoint file to be used to instantiate the model
         # from the checkpoint later.
         self.save_hyperparameters()
-        self.model = Enc2d3d(pretrained=True)
+        self.model =  Enc2d3dRetina(pretrained=True) # Enc2d3d(pretrained=True) # Enc2d3dRetina(pretrained=True) # Enc2d3d(pretrained=True)
         self.validation_step_outputs = []
         self.valid_accuracy= MulticlassAccuracy(num_classes=3)
     
@@ -58,6 +59,8 @@ class RSNASpineLightningModule(pl.LightningModule):
             }
         
         if mode == 'val':
+            self.valid_accuracy.update(output["grade"].detach().flatten(end_dim=1),
+                                       batch["grade"].detach().flatten())
             self.validation_step_outputs.append(
                 (
                     output["grade"].detach().cpu().numpy(),
@@ -77,8 +80,10 @@ class RSNASpineLightningModule(pl.LightningModule):
         
     def on_validation_epoch_end(self):
         grades = np.concatenate([x[0] for x in self.validation_step_outputs])
-        self.validation_step_outputs.clear()
+        # accuracy = 
+        #self.validation_step_outputs.clear()
         self.log("val/accuracy", self.valid_accuracy.compute().cpu().item())
+        self.validation_step_outputs.clear()
         self.valid_accuracy.reset()
 
     def predict_step(self, batch, batch_idx):
